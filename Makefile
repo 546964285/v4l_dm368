@@ -6,7 +6,7 @@ INSTALL_DIR1=/home/andy/targetfs/rootfs_ridgerun
 INSTALL_DIR2=/home/andy/targetfs/ti_root/home/root
 CMEMLIB=cmem.a470uC
 CC = $(CROSS_COMPILE)gcc -I$(KERNEL_DIR)/include
-TARGET=v4l2_dm368_r1
+TARGET=v4l2_dm368_r2
 
 $(TARGET): $(TARGET).o
 	$(CC) -o  $(TARGET) $^

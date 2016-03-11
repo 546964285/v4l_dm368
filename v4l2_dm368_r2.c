@@ -32,11 +32,9 @@
 #include <media/davinci/imp_resizer.h>
 #include <media/davinci/dm365_ipipe.h>
 
+//#define ROTATE 1
 #include <video/davincifb_ioctl.h>
 #include <video/davinci_osd.h>
-
-#define ROTATE 	0
-#define FBDEV	0
 
 #define CLEAR(x) memset (&(x), 0, sizeof (x))
 
@@ -382,6 +380,7 @@ int main(int argc, char **argv)
     mmap_vid1();
     mmap_osd0();
     disable_all_windows();
+    
     start_loop();
 
     // TODO: release device and memory
@@ -746,6 +745,7 @@ static void open_previewer(void)
             //exit (EXIT_FAILURE);
         }
 
+// TODO: WB etc.
 
         cap.index++;
     }
@@ -1322,7 +1322,7 @@ static void display_request_buffers(void)
     //printf("2. Test request for buffers\n");
     reqbuf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
     reqbuf.count = 3;
-    reqbuf.memory = V4L2_MEMORY_MMAP;
+    reqbuf.memory = V4L2_MEMORY_USERPTR;
     ret = ioctl(vid0_fd, VIDIOC_REQBUFS, &reqbuf);
 
     if (ret < 0) 
@@ -1382,7 +1382,7 @@ static void display_set_format(void)
     crop.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
     crop.c.height=384;
     crop.c.width=384;
-    crop.c.top=10;
+    crop.c.top=200;
     crop.c.left=10;
 
     ret = ioctl(vid0_fd, VIDIOC_S_CROP, &crop);
@@ -1449,36 +1449,36 @@ static void display_init_mmap(void)
 
     for (i = 0; i < reqbuf.count; i++)
     {
-        buf.index = i;
-        buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-        buf.memory = V4L2_MEMORY_MMAP;
-        ret = ioctl(vid0_fd, VIDIOC_QUERYBUF, &buf);
-        if (ret < 0) 
+//	        buf.index = i;
+//	        buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+//	        buf.memory = V4L2_MEMORY_MMAP;
+//	        ret = ioctl(vid0_fd, VIDIOC_QUERYBUF, &buf);
+//	        if (ret < 0) 
+//	        {
+//	            printf("fail: query buffer for display\n");
+//	            //exit (EXIT_FAILURE);
+//	        } 
+//	        else
+//	        {
+//	            printf("success: query buffer for display\n");
+//	        }
+//	
+//	        vid0Buf[i].length = buf.length; 
+//	        vid0Buf[i].start = mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, vid0_fd, buf.m.offset);
+
+        vid0Buf[i].length = 1572864; 
+        if(vid0Buf[i].start = (char *)calloc(1572864, sizeof(char))==0)
         {
-            printf("fail: query buffer for display\n");
-            //exit (EXIT_FAILURE);
-        } 
+            printf("fail: alloc cmem for userptr\n");
+        }
         else
         {
-            printf("success: query buffer for display\n");
+            printf("success: alloc cmem for userptr\n");
         }
-
-        vid0Buf[i].length = buf.length; 
-        vid0Buf[i].start = mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, vid0_fd, buf.m.offset);
-        printf("buffer:%d phy:%x mmap:%p length:%d\n",
-            buf.index,
-            buf.m.offset,
+        printf("buffer:%d mmap:%p length:%d\n",
+            i,
             vid0Buf[i].start,
-            buf.length);
-
-        if (MAP_FAILED == vid0Buf[i].start)
-        {
-            printf("fail: mmap buffer for display\n");
-        }
-        else
-        {
-            printf("success: mmap buffer for display\n");
-        }
+            vid0Buf[i].length);
 
         //memset(vid0Buf[i].start, 0x80, buf.length);
 		memset(vid0Buf[i].start, 0x00, buf.length);
@@ -1516,9 +1516,11 @@ static void display_start_streaming(void)
         CLEAR (buf);
         
         buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-        buf.memory = V4L2_MEMORY_MMAP;
+        buf.memory = V4L2_MEMORY_USERPTR;
         buf.index = i;
-        
+        //buf.length = 294912;
+        buf.length = 1572864;
+        buf.m.userptr = (unsigned long)buffers[buf.index].start;
         ret = ioctl(vid0_fd, VIDIOC_QBUF, &buf);
 
         if(ret < 0)
@@ -1563,7 +1565,7 @@ static void *get_display_buffer(int vid_win)
 		perror("VIDIOC_DQBUF\n");
 		return NULL;
 	}
-	return vid0Buf[buf.index].start;
+	return buffers[buf.index].start;
 }
 
 /*******************************************************************************
@@ -1583,16 +1585,20 @@ static int put_display_buffer(int vid_win, void *addr)
 	memset(&buf, 0, sizeof(buf));
 
 	for (i = 0; i < 3; i++) {
-		if (addr == vid0Buf[i].start) {
+		if (addr == buffers[i].start) {
 			index = i;
 			break;
 		}
 	}
 	buf.m.offset = (unsigned long)addr;
 	buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-	buf.memory = V4L2_MEMORY_MMAP;
+	buf.memory = V4L2_MEMORY_USERPTR;
 	buf.index = index;
 //printf("in put_display_buffer();\n");
+
+	buf.length = 1572864;
+	buf.m.userptr = (unsigned long)buffers[index].start;
+
 	ret = ioctl(vid_win, VIDIOC_QBUF, &buf);
 	return ret;
 }
@@ -1624,7 +1630,6 @@ static void start_loop(void)
     unsigned char * psrc       = NULL;
     unsigned char * pdst[2]   = {NULL, NULL};
 	void *src, *dest;
-    int dummy;
 	
 //	    FILE * fin_fd;
 //	    FILE * fout_fd;
@@ -1650,27 +1655,11 @@ static void start_loop(void)
 	//while (!quit)
 	while(1)
 	{
-        // Wait for vertical sync
-        if (ioctl(fd_vid1, FBIO_WAITFORVSYNC, &dummy) < -1)
-        {
-            printf("Failed FBIO_WAITFORVSYNC\n");
-			if (EAGAIN == errno)
-			{
-                printf("disp_again\n");
-                continue;
-            }
-            //return -1;
-        }
-//	        else
-//	        {
-//	            printf("Wait for vertical sync\n");
-//	        }
-        
 		CLEAR(buf);
 		buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 		buf.memory = V4L2_MEMORY_MMAP;
 
-		// determine ready buffer
+		/* determine ready buffer */
 		if (-1 == ioctl(capture_fd, VIDIOC_DQBUF, &buf))
 		{
 			if (EAGAIN == errno)
@@ -1813,7 +1802,7 @@ static void start_loop(void)
 //	        //}
 
 
-#if(ROTATE)
+#ifdef ROTATE
         char y_tmp_u,y_tmp_v;
         for (i = 0; i < 768; i += 4)
         {
@@ -1845,17 +1834,18 @@ static void start_loop(void)
         memcpy(src, dst, 294912);
 #endif /* ROTATE */
 
-		dest = displaybuffer;
-
-        /* Display image onto requested video window */
-        for(i=0 ; i < 768; i++) 
-        {
-            memcpy(dest, src, 384*2);
-            src += 384*2;
-            dest += 384*2;
-        }
-
-        free(dst);
+//			dest = displaybuffer;
+//	        printf("Oops!\n");
+//	
+//	        /* Display image onto requested video window */
+//	        for(i=0 ; i < 768; i++) 
+//	        {
+//	            memcpy(dest, src, 384*2);
+//	            src += 384*2;
+//	            dest += 384*2;
+//	        }
+//	
+	        free(dst);
 
 //	        if(quit)
 //	        {
@@ -1888,16 +1878,15 @@ static void start_loop(void)
 
 //	    printf("Oops!!\n");
 
-		ret = put_display_buffer(vid0_fd, displaybuffer);
+		ret = put_display_buffer(vid0_fd, displaybuffer); // 这里displaybuffer==src
     //printf("put_display_buffer\n");
 		if (ret < 0) {
 			printf("Error in putting the display buffer\n");
 			//return ret;
 		}
 		/***************** END V4L2 display ******************/
-#if(FBDEV)
-        display_frame(VID1, src);
-#endif
+        display_frame(VID1, displaybuffer); // 这里displaybuffer==src
+		
 		if (printfn)
 			printf("time:%lu    frame:%u\n", (unsigned long)time(NULL),
 		       		captFrmCnt++);

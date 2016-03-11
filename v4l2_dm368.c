@@ -35,6 +35,9 @@
 
 #define CAPTURE_DEVICE	"/dev/video0"
 #define VID0_DEVICE "/dev/video2"
+#define VID1_DEVICE	"/dev/video3"
+#define OSD0_DEVICE	"/dev/fb0"
+#define OSD1_DEVICE	"/dev/fb2"
 
 char *dev_name_prev = "/dev/davinci_previewer";
 char *dev_name_rsz = "/dev/davinci_resizer";
@@ -73,6 +76,9 @@ struct rsz_continuous_config rsz_ctn_config;
 struct prev_single_shot_config prev_ss_config;
 struct prev_continuous_config prev_ctn_config;
 
+static short yee_table[MAX_SIZE_YEE_LUT];
+#define YEE_TABLE_FILE "EE_Table.txt"
+
 static void
 errno_exit (const char *s)
 {
@@ -93,6 +99,7 @@ xioctl (int fd, int request, void *arg)
   return r;
 }
 
+// ref to  capture_prev_rsz_onthe_fly_bayer.c
 static int configCCDCraw(int capt_fd)
 {
 	struct ccdc_config_params_raw raw_params;
@@ -145,9 +152,9 @@ static int configCCDCraw(int capt_fd)
 		 * really match with that of the capture standard
 		 */
 		raw_params.df_csc.start_pix = 1;
-		raw_params.df_csc.num_pixels = 720;
+		raw_params.df_csc.num_pixels = 384;
 		raw_params.df_csc.start_line = 1;
-		raw_params.df_csc.num_lines = 480;
+		raw_params.df_csc.num_lines = 384;
 		/* These are unit test values. For real case, use
 		 * correct values in this table
 		 */
@@ -433,13 +440,14 @@ static int start_loop(void)
 {
 	int ret, quit;
 	struct v4l2_buffer buf;
-	static int captFrmCnt = 0, printfn = 0, stress_test = 1, start_loopCnt = 200;
+	static int captFrmCnt = 0, printfn = 0, stress_test = 1, start_loopCnt = 2000;
 	unsigned char *displaybuffer = NULL;
 	int i;
 	char *ptrPlanar = NULL;
 	void *src, *dest;
 
 	ptrPlanar = (char *)calloc(1, 1280 * 720 * 2);
+    //ptrPlanar = (char *)calloc(1, 384 * 384 * 2);
 
 	while (!quit) {
 		fd_set fds;
@@ -488,9 +496,9 @@ static int start_loop(void)
 
 		/* Display image onto requested video window */
 		for(i=0 ; i < 720; i++) {
-			memcpy(dest, src, 2560);
-			src += 2560;
-			dest += 2560;
+		memcpy(dest, src, 1024*2);
+			src += 1024*2;
+			dest += 1024*2;
 		}
 
 		ret = put_display_buffer(fd_vid0, displaybuffer);
@@ -513,7 +521,7 @@ static int start_loop(void)
 			start_loopCnt--;
 			if (start_loopCnt == 0) {
 				start_loopCnt = 50;
-				break;
+				//break;
 			}
 		}
 	}
@@ -535,7 +543,7 @@ mainloop (void)
 //		printf("1. Opening VID0 device\n");
 	fd_vid0 = open(VID0_DEVICE, O_RDWR);
 	if (-1 == fd_vid0) {
-		printf("failed to open VID1 display device\n");
+		printf("failed to open VID0 display device\n");
 		//return -1;
 	}
 //		printf("Opening VID0 device SUCCESS!\n");
@@ -596,9 +604,13 @@ mainloop (void)
 	//setfmt.fmt.pix.pixelformat = V4L2_PIX_FMT_BGR24;
 	setfmt.fmt.pix.pixelformat = V4L2_PIX_FMT_NV12;
 	//setfmt.fmt.pix.pixelformat = V4L2_PIX_FMT_SBGGR16;
-	//setfmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
-	setfmt.fmt.pix.width = 1280;
-	setfmt.fmt.pix.height = 720;
+	setfmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
+	setfmt.fmt.pix.width = 384;
+	setfmt.fmt.pix.height = 384;
+//	    setfmt.fmt.win.w.height=384;
+//	    setfmt.fmt.win.w.left=100;
+//	    setfmt.fmt.win.w.top=100;
+//	    setfmt.fmt.win.w.width=384;
 	setfmt.fmt.pix.field = V4L2_FIELD_NONE;
 	ret = ioctl(fd_vid0, VIDIOC_S_FMT, &setfmt);
 	if (ret < 0) 
@@ -1007,6 +1019,18 @@ static void init_device (void)
     v4l2_std_id std; 
     u_char ret;
     unsigned int min;
+    struct v4l2_dbg_chip_ident chip;
+
+    CLEAR (chip);
+    if (ioctl(fd, VIDIOC_DBG_G_CHIP_IDENT, &chip))
+    {
+        printf("VIDIOC_DBG_G_CHIP_IDENT failed.\n");
+        //return FAIL;
+    }
+    else
+    {
+        printf("sensor chip is %s\n", chip.match.name);
+    }
 
     // 查询设备属性： VIDIOC_QUERYCAP
     if (-1 == xioctl (fd, VIDIOC_QUERYCAP, &cap))
@@ -1184,12 +1208,12 @@ static void init_device (void)
     // 设置当前格式
     CLEAR (fmt);
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    fmt.fmt.pix.width = 1280;
-    fmt.fmt.pix.height = 720;
+    fmt.fmt.pix.width = 384;
+    fmt.fmt.pix.height = 384;
     fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_NV12;
     //fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_SBGGR8;
     //fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_SBGGR16;
-    //fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_UYVY;
+    fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_UYVY;
     fmt.fmt.pix.field = V4L2_FIELD_ANY;
     //fmt.fmt.pix.bytesperline=2560;
     printf("pixelformat = %x",fmt.fmt.pix.pixelformat);
@@ -1365,17 +1389,53 @@ close_device (void)
   fd = -1;
 }
 
+int parse_yee_table(void)
+{
+	int ret = -1, val, i;
+	FILE *fp;
+
+	fp = fopen(YEE_TABLE_FILE, "r");
+	if (fp == NULL) {
+		printf("Error in opening file %s\n", YEE_TABLE_FILE);
+		goto out;
+	}
+
+	for (i = 0; i < MAX_SIZE_YEE_LUT; i++) {
+		fscanf(fp, "%d", &val);
+		printf("%d,", val);
+		yee_table[i] = val & 0x1FF;
+	}
+	printf("\n");
+	if (i != MAX_SIZE_YEE_LUT)
+		goto clean_file;	
+	ret = 0;
+clean_file:
+	fclose(fp);
+out:
+	return ret;
+}
+
+
 static void open_device (void)
 {
+    int ret;
 	struct stat st;
+    
+    struct prev_cap cap;
+    struct prev_module_param mod_param;
+    struct prev_wb wb;
+	struct prev_lum_adj lum_adj;
+	struct prev_gamma gamma;
+    struct prev_yee yee;
+    struct imp_convert convert;
 
-	
+    oper_mode_1 = IMP_MODE_CONTINUOUS;
+//oper_mode_1 = 0;
+
+    
 //    printf("Configuring resizer in the chain mode\n");
 //    printf("Opening resizer device, %s\n",dev_name_rsz);
     resizer_fd = open(dev_name_rsz, O_RDWR);
-	
-    oper_mode_1 = IMP_MODE_CONTINUOUS;
-    //oper_mode_1 = 0;
 	
     if (ioctl(resizer_fd, RSZ_S_OPER_MODE, &oper_mode_1) < 0) 
     {
@@ -1419,14 +1479,38 @@ static void open_device (void)
     	perror("Error in getting default configuration for continuous mode\n");
         close(resizer_fd);
     }
-	
+    
 #if 0
+    printf("\n");
+    printf("rsz_ctn_config.output1.enable = %d\n", rsz_ctn_config.output1.enable);
+    printf("rsz_ctn_config.output1.en_down_scale = %d\n", rsz_ctn_config.output1.en_down_scale);
+    printf("rsz_ctn_config.output1.h_dscale_ave_sz = %d\n", rsz_ctn_config.output1.h_dscale_ave_sz);
+    printf("rsz_ctn_config.output1.h_flip = %d\n", rsz_ctn_config.output1.h_flip);
+    printf("rsz_ctn_config.output1.h_lpf_int_c = %d\n", rsz_ctn_config.output1.h_lpf_int_c);
+    printf("rsz_ctn_config.output1.h_lpf_int_y = %d\n", rsz_ctn_config.output1.h_lpf_int_y);
+    printf("rsz_ctn_config.output1.h_typ_c = %d\n", rsz_ctn_config.output1.h_typ_c);
+    printf("rsz_ctn_config.output1.h_typ_y = %d\n", rsz_ctn_config.output1.h_typ_y);
+    printf("rsz_ctn_config.output1.user_c_ofst = %d\n", rsz_ctn_config.output1.user_c_ofst);
+    printf("rsz_ctn_config.output1.user_y_ofst = %d\n", rsz_ctn_config.output1.user_y_ofst);
+    printf("rsz_ctn_config.output1.v_dscale_ave_sz = %d\n", rsz_ctn_config.output1.v_dscale_ave_sz);
+    printf("rsz_ctn_config.output1.v_flip = %d\n", rsz_ctn_config.output1.v_flip);
+    printf("rsz_ctn_config.output1.v_lpf_int_c = %d\n", rsz_ctn_config.output1.v_lpf_int_c);
+    printf("rsz_ctn_config.output1.v_lpf_int_y = %d\n", rsz_ctn_config.output1.v_lpf_int_y);
+    printf("rsz_ctn_config.output1.v_typ_c = %d\n", rsz_ctn_config.output1.v_typ_c);
+    printf("rsz_ctn_config.output1.v_typ_y = %d\n", rsz_ctn_config.output1.v_typ_y);
+
     printf("rsz_ctn_config.chroma_sample_even = %d\n", rsz_ctn_config.chroma_sample_even);
     printf("rsz_ctn_config.yuv_c_max = %d\n", rsz_ctn_config.yuv_c_max);
     printf("rsz_ctn_config.yuv_c_min = %d\n", rsz_ctn_config.yuv_c_min);
     printf("rsz_ctn_config.yuv_y_max = %d\n", rsz_ctn_config.yuv_y_max);
     printf("rsz_ctn_config.yuv_y_min = %d\n", rsz_ctn_config.yuv_y_min);
 #endif
+//	    rsz_ctn_config.output1.v_typ_c=0;
+//	    rsz_ctn_config.output1.v_typ_y=0;
+//	    rsz_ctn_config.output1.h_lpf_int_y=100;
+//	    rsz_ctn_config.output1.h_lpf_int_c=100;
+//	    rsz_ctn_config.output1.v_flip=0;
+
     rsz_ctn_config.output1.enable = 1;
     rsz_ctn_config.output2.enable = 0;
     rsz_chan_config.oper_mode = IMP_MODE_CONTINUOUS;
@@ -1437,7 +1521,49 @@ static void open_device (void)
     	perror("Error in setting default configuration for continuous mode\n");
         close(resizer_fd);
     }
+#if 1
+        printf("\n");
+        printf("rsz_ctn_config.output1.enable = %d\n", rsz_ctn_config.output1.enable);
+        printf("rsz_ctn_config.output1.en_down_scale = %d\n", rsz_ctn_config.output1.en_down_scale);
+        printf("rsz_ctn_config.output1.h_dscale_ave_sz = %d\n", rsz_ctn_config.output1.h_dscale_ave_sz);
+        printf("rsz_ctn_config.output1.h_flip = %d\n", rsz_ctn_config.output1.h_flip);
+        printf("rsz_ctn_config.output1.h_lpf_int_c = %d\n", rsz_ctn_config.output1.h_lpf_int_c);
+        printf("rsz_ctn_config.output1.h_lpf_int_y = %d\n", rsz_ctn_config.output1.h_lpf_int_y);
+        printf("rsz_ctn_config.output1.h_typ_c = %d\n", rsz_ctn_config.output1.h_typ_c);
+        printf("rsz_ctn_config.output1.h_typ_y = %d\n", rsz_ctn_config.output1.h_typ_y);
+        printf("rsz_ctn_config.output1.user_c_ofst = %d\n", rsz_ctn_config.output1.user_c_ofst);
+        printf("rsz_ctn_config.output1.user_y_ofst = %d\n", rsz_ctn_config.output1.user_y_ofst);
+        printf("rsz_ctn_config.output1.v_dscale_ave_sz = %d\n", rsz_ctn_config.output1.v_dscale_ave_sz);
+        printf("rsz_ctn_config.output1.v_flip = %d\n", rsz_ctn_config.output1.v_flip);
+        printf("rsz_ctn_config.output1.v_lpf_int_c = %d\n", rsz_ctn_config.output1.v_lpf_int_c);
+        printf("rsz_ctn_config.output1.v_lpf_int_y = %d\n", rsz_ctn_config.output1.v_lpf_int_y);
+        printf("rsz_ctn_config.output1.v_typ_c = %d\n", rsz_ctn_config.output1.v_typ_c);
+        printf("rsz_ctn_config.output1.v_typ_y = %d\n", rsz_ctn_config.output1.v_typ_y);
+    
+        printf("rsz_ctn_config.chroma_sample_even = %d\n", rsz_ctn_config.chroma_sample_even);
+        printf("rsz_ctn_config.yuv_c_max = %d\n", rsz_ctn_config.yuv_c_max);
+        printf("rsz_ctn_config.yuv_c_min = %d\n", rsz_ctn_config.yuv_c_min);
+        printf("rsz_ctn_config.yuv_y_max = %d\n", rsz_ctn_config.yuv_y_max);
+        printf("rsz_ctn_config.yuv_y_min = %d\n", rsz_ctn_config.yuv_y_min);
+#endif
 
+	bzero(&convert,sizeof(convert));
+//    bzero(output1_buffer.user_addr, output1_size);
+//	memcpy(input_buffer.user_addr, in_buf, size);
+	convert.in_buff.buf_type = IMP_BUF_IN;
+	convert.in_buff.index = -1;
+	//convert.in_buff.offset = (unsigned int)input_buffer.user_addr;
+	convert.in_buff.size = 1;
+	convert.out_buff1.buf_type = IMP_BUF_OUT1;
+	convert.out_buff1.index = -1;
+//	convert.out_buff1.offset = (unsigned int)output1_buffer.user_addr;
+	convert.out_buff1.size = 4;
+
+	if (ioctl(resizer_fd, RSZ_RESIZE, &convert) < 0) {
+		perror("Error in doing resize\n");
+		ret = -1;
+//		goto out;
+	} 
 
     
     preview_fd = open(dev_name_prev, O_RDWR);
@@ -1546,6 +1672,122 @@ static void open_device (void)
 		perror("Error in setting default configuration\n");
         close(preview_fd);
 	}
+
+    cap.index=0;
+	while (1) {
+		ret = ioctl(preview_fd , PREV_ENUM_CAP, &cap);
+		if (ret < 0) {
+			break;	
+		}
+		// find the defaults for this module
+	
+		strcpy(mod_param.version,cap.version);
+		mod_param.module_id = cap.module_id;
+		// try set parameter for this module
+#if 1
+		if (cap.module_id == PREV_WB) {
+            printf("cap.module_id == PREV_WB\n");
+			bzero((void *)&wb, sizeof (struct prev_wb));
+			wb.gain_r.integer = 1;
+			wb.gain_r.decimal = 0;
+			wb.gain_gr.integer = 1;
+			wb.gain_gr.decimal = 0;
+			wb.gain_gb.integer = 1;
+			wb.gain_gb.decimal = 0;
+			wb.gain_b.integer = 1;
+			wb.gain_b.decimal = 0;
+			wb.ofst_r = 0;
+			wb.ofst_gb = 0;
+			wb.ofst_b = 0;
+			mod_param.len = sizeof(struct prev_wb);
+			mod_param.param = &wb;
+	
+		} 
+        else if (cap.module_id == PREV_LUM_ADJ) 
+        {
+            printf("cap.module_id == PREV_LUM_ADJ\n");
+			bzero((void *)&lum_adj, sizeof (struct prev_lum_adj));
+			lum_adj.brightness = 0;
+			lum_adj.contrast = 20; 
+			mod_param.len = sizeof (struct prev_lum_adj);
+			mod_param.param = &lum_adj;
+#if 1
+		} 
+        else if (cap.module_id == PREV_GAMMA) 
+        {
+			printf("Setting gamma for %s\n", cap.module_name);
+			bzero((void *)&gamma, sizeof (struct prev_gamma));
+			gamma.bypass_r = 1;
+			gamma.bypass_b = 1;
+			gamma.bypass_g = 1;
+			gamma.tbl_sel = IPIPE_GAMMA_TBL_RAM;
+            gamma.tbl_size = IPIPE_GAMMA_TBL_SZ_512;
+			mod_param.len = sizeof (struct prev_gamma);
+			mod_param.param = &gamma;
+#endif
+		}
+
+            else if (cap.module_id == PREV_YEE)
+            {
+                    printf("Setting Edge Enhancement for %s\n", cap.module_name);
+                    bzero((void *)&yee, sizeof (struct prev_yee));
+                    bzero((void *)&yee_table, sizeof (struct prev_yee));
+                    yee.en = 1;
+                    //yee.en_halo_red = 1;
+                    yee.en_halo_red = 0;
+                    //yee.merge_meth = IPIPE_YEE_ABS_MAX;
+                    yee.merge_meth = IPIPE_YEE_EE_ES;
+                    yee.hpf_shft = 6; // 5, 10
+//	                    yee.hpf_coef_00 = 8;
+//	                    yee.hpf_coef_01 = 2;
+//	                    yee.hpf_coef_02 = -2;
+//	                    yee.hpf_coef_10 = 2;
+//	                    yee.hpf_coef_11 = 0;
+//	                    yee.hpf_coef_12 = -1;
+//	                    yee.hpf_coef_20 = -2;
+//	                    yee.hpf_coef_21 = -1;
+//	                    yee.hpf_coef_22 = 0;
+                    yee.hpf_coef_00 = 84,
+        	           yee.hpf_coef_01 = (-8 & 0x3FF),     	   
+                    yee.hpf_coef_02 = (-4 & 0x3FF),
+                    yee.hpf_coef_10 = (-8 & 0x3FF),
+                    yee.hpf_coef_11 = (-4 & 0x3FF),
+                    yee.hpf_coef_12 = (-2 & 0x3FF),
+                    yee.hpf_coef_20 = (-4 & 0x3FF),
+                    yee.hpf_coef_21 = (-2 & 0x3FF),
+                    yee.hpf_coef_22 = (-1 & 0x3FF),
+                    yee.yee_thr = 20; //12
+                    yee.es_gain = 128;
+                    yee.es_thr1 = 768;
+                    yee.es_thr2 = 32;
+                    yee.es_gain_grad = 32;
+                    yee.es_ofst_grad = 0;
+                    if(parse_yee_table() <0)
+                    {
+                        printf("read yee table error.\n");
+                    }
+                    yee.table = yee_table;
+
+                    mod_param.len = sizeof (struct prev_yee);
+                    mod_param.param = &yee;
+            }
+            
+		else {
+	
+#endif
+			// using defaults
+			printf("Setting default for %s\n", cap.module_name);
+			mod_param.param = NULL;
+#if 1
+		}
+#endif
+		if (ioctl(preview_fd, PREV_S_PARAM, &mod_param) < 0) {
+			printf("Error in Setting %s params from driver\n", cap.module_name);
+			close(preview_fd);
+			//return -1;
+		}
+		cap.index++;
+	}	
 
     
 #endif

@@ -32,9 +32,11 @@
 #include <media/davinci/imp_resizer.h>
 #include <media/davinci/dm365_ipipe.h>
 
-//#define ROTATE 1
+// #define ROTATE 1
 #include <video/davincifb_ioctl.h>
 #include <video/davinci_osd.h>
+
+#include "cmem.h"
 
 #define CLEAR(x) memset (&(x), 0, sizeof (x))
 
@@ -130,6 +132,8 @@
 
 #define LOOP_COUNT		500
 
+#define MIN_BUFFERS 3
+
 #define DEBUG
 #ifdef DEBUG
 #define DBGENTER  	printf("%s : Enter\n", __FUNCTION__);
@@ -141,11 +145,22 @@
 #define PREV_DEBUG(x)
 #endif
 
+
 struct buffer
 {
     void *start;
     size_t length;
 };
+
+#define ALIGN(x, y)	(((x + (y-1))/y)*y)
+
+struct buf_info {
+	void *user_addr;
+	unsigned long phy_addr;
+};
+
+struct buf_info user_io_buffers[MIN_BUFFERS];
+
 
 char *dev_name_prev = "/dev/davinci_previewer";
 char *dev_name_rsz = "/dev/davinci_resizer";
@@ -293,6 +308,8 @@ static int linearization_en;
 static int csc_en;
 static int vldfc_en;
 static int en_culling;
+static int buf_size;
+
 static unsigned int n_buffers = 0;
 static unsigned long oper_mode_1;
 static unsigned long user_mode_1;
@@ -347,9 +364,15 @@ static int mmap_vid1(void);
 static int mmap_osd0(void);
 static int disable_all_windows(void);
 static int display_frame(char id, void *ptr_buffer);
+static int allocate_user_buffers(void);
 
 int main(int argc, char **argv)
 {
+	if (allocate_user_buffers() < 0) {
+			printf("Test fail\n");
+			exit(1);
+	}
+
 // open_device
     open_resizer();
     open_previewer();
@@ -371,15 +394,15 @@ int main(int argc, char **argv)
     display_request_buffers();
     display_set_format();
     display_get_format();
-    display_init_mmap();
+    //display_init_mmap();
     //display_getinfo_control();
     display_start_streaming();
 
-    init_vid1_device();
-    init_osd0_device();
-    mmap_vid1();
-    mmap_osd0();
-    disable_all_windows();
+//	    init_vid1_device();
+//	    init_osd0_device();
+//	    mmap_vid1();
+//	    mmap_osd0();
+//	    disable_all_windows();
     
     start_loop();
 
@@ -899,12 +922,12 @@ static void capture_set_format(void)
 
 static void capture_init_mmap(void)
 {
-    static struct v4l2_buffer buf;
+    struct v4l2_requestbuffers req;
 
     CLEAR (req);
     req.count = 3;
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    req.memory = V4L2_MEMORY_MMAP;
+    req.memory = V4L2_MEMORY_USERPTR;
 
     if (ioctl(capture_fd, VIDIOC_REQBUFS, &req))
     {
@@ -916,72 +939,72 @@ static void capture_init_mmap(void)
         printf("success: request buffers for capture\n");
     }
 
-    // 2 is minimum buffers
-    if (req.count < 2)
-    {
-      fprintf (stderr, "Insufficient buffer memory on %s\n", CAPTURE_DEVICE);
-      exit (EXIT_FAILURE);
-    }
+//	    // 2 is minimum buffers
+//	    if (req.count < 2)
+//	    {
+//	      fprintf (stderr, "Insufficient buffer memory on %s\n", CAPTURE_DEVICE);
+//	      exit (EXIT_FAILURE);
+//	    }
 
-    // request buffer
-    buffers = calloc (req.count, sizeof (*buffers));
+//	    // request buffer
+//	    buffers = calloc (req.count, sizeof (*buffers));
+//	
+//	    if (!buffers)
+//	    {
+//	        //fprintf (stderr, "Out of memory\n");
+//	        printf("fail: Out of memory for capture\n");
+//	        exit (EXIT_FAILURE);
+//	    }
+//	//    else
+//	//    {
+//	//        printf("success in init_capture_buffers calloc\n");
+//	//    }
 
-    if (!buffers)
-    {
-        //fprintf (stderr, "Out of memory\n");
-        printf("fail: Out of memory for capture\n");
-        exit (EXIT_FAILURE);
-    }
-//    else
-//    {
-//        printf("success in init_capture_buffers calloc\n");
-//    }
-
-    // query buffer status
-    for (n_buffers = 0; n_buffers < req.count; ++n_buffers)
-    {
-//        printf("process n_buffers %d\n", n_buffers);
-        CLEAR (buf);
-
-        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buf.memory = V4L2_MEMORY_MMAP;
-        buf.index = n_buffers;
-
-        if (-1 == ioctl (capture_fd, VIDIOC_QUERYBUF, &buf))
-        {
-            printf("fail: in init_capture_buffers: VIDIOC_QUERYBUF\n");
-            //fprintf (stderr, "%s error %d, %s\n", s, errno, strerror (errno));
-            exit (EXIT_FAILURE);
-        }
-        else
-        {
-            printf("success: query buffers for capture\n");
-//	            printf("buffer.length = %d\n",buf.length);
-//	            printf("buffer.bytesused = %d\n",buf.bytesused);
-        }
-
-        buffers[n_buffers].length = buf.length;
-        buffers[n_buffers].start = mmap (NULL /* start anywhere */ ,
-				       buf.length,
-				       PROT_READ | PROT_WRITE /* required */ ,
-				       MAP_SHARED /* recommended */ ,
-				       capture_fd, buf.m.offset);
-        printf("buffer:%d phy:%x mmap:%p length:%d\n", 
-            buf.index, 
-            buf.m.offset, 
-            buffers[n_buffers].start, 
-            buf.length);
-
-        if (MAP_FAILED == buffers[n_buffers].start)
-        {
-            printf("failed in init_capture_buffers: mmap\n");
-            exit (EXIT_FAILURE);
-        }
-//        else
-//        {
-//            printf("success in init_capture_buffers mmap\n");
-//        }
-    }
+//	    // query buffer status
+//	    for (n_buffers = 0; n_buffers < req.count; ++n_buffers)
+//	    {
+//	//        printf("process n_buffers %d\n", n_buffers);
+//	        CLEAR (buf);
+//	
+//	        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+//	        buf.memory = V4L2_MEMORY_MMAP;
+//	        buf.index = n_buffers;
+//	
+//	        if (-1 == ioctl (capture_fd, VIDIOC_QUERYBUF, &buf))
+//	        {
+//	            printf("fail: in init_capture_buffers: VIDIOC_QUERYBUF\n");
+//	            //fprintf (stderr, "%s error %d, %s\n", s, errno, strerror (errno));
+//	            exit (EXIT_FAILURE);
+//	        }
+//	        else
+//	        {
+//	            printf("success: query buffers for capture\n");
+//	//	            printf("buffer.length = %d\n",buf.length);
+//	//	            printf("buffer.bytesused = %d\n",buf.bytesused);
+//	        }
+//	
+//	        buffers[n_buffers].length = buf.length;
+//	        buffers[n_buffers].start = mmap (NULL /* start anywhere */ ,
+//					       buf.length,
+//					       PROT_READ | PROT_WRITE /* required */ ,
+//					       MAP_SHARED /* recommended */ ,
+//					       capture_fd, buf.m.offset);
+//	        printf("buffer:%d phy:%x mmap:%p length:%d\n", 
+//	            buf.index, 
+//	            buf.m.offset, 
+//	            buffers[n_buffers].start, 
+//	            buf.length);
+//	
+//	        if (MAP_FAILED == buffers[n_buffers].start)
+//	        {
+//	            printf("failed in init_capture_buffers: mmap\n");
+//	            exit (EXIT_FAILURE);
+//	        }
+//	//        else
+//	//        {
+//	//            printf("success in init_capture_buffers mmap\n");
+//	//        }
+//	    }
 
 }
 
@@ -1217,16 +1240,19 @@ static void capture_start_streaming(void)
     unsigned int i;
     enum v4l2_buf_type type;
 
-    for (i = 0; i < n_buffers; ++i)
+    for (i = 0; i < 3; ++i)
     {
         struct v4l2_buffer buf;
 
         CLEAR (buf);
 
         buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE; 
-        buf.memory = V4L2_MEMORY_MMAP;
+        buf.memory = V4L2_MEMORY_USERPTR;
         buf.index = i;
-
+        buf.length = buf_size;
+        //buf.length = 294912;
+        buf.length = 1572864;
+        buf.m.userptr = (unsigned long)user_io_buffers[i].user_addr;
         if (-1 == ioctl(capture_fd, VIDIOC_QBUF, &buf))
         {
             printf("fail: test capture stream queue buffer %d\n", i);
@@ -1520,7 +1546,7 @@ static void display_start_streaming(void)
         buf.index = i;
         //buf.length = 294912;
         buf.length = 1572864;
-        buf.m.userptr = (unsigned long)buffers[buf.index].start;
+        buf.m.userptr = (unsigned long)user_io_buffers[i].user_addr;
         ret = ioctl(vid0_fd, VIDIOC_QBUF, &buf);
 
         if(ret < 0)
@@ -1621,9 +1647,10 @@ static void start_loop(void)
 
 	int ret, quit=0;
 	struct v4l2_buffer buf;
+	struct v4l2_buffer cap_buf, disp_buf;
 	static int captFrmCnt = 0, printfn = 0, stress_test = 1, start_loopCnt = 20;
 	unsigned char *displaybuffer = NULL;
-	unsigned char temp;
+	unsigned long temp;
 	int i,j,k;
 	char *ptrPlanar = NULL;
 	char *dst = NULL;
@@ -1652,32 +1679,73 @@ static void start_loop(void)
 //	        printf("success: open output_frame.YUV\n");
 //	    }
 
+
+	CLEAR(cap_buf);
+	CLEAR(disp_buf);
+
 	//while (!quit)
 	while(1)
 	{
-		CLEAR(buf);
-		buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-		buf.memory = V4L2_MEMORY_MMAP;
-
-		/* determine ready buffer */
-		if (-1 == ioctl(capture_fd, VIDIOC_DQBUF, &buf))
-		{
-			if (EAGAIN == errno)
-				continue;
-			printf("StartCameraCaputre:ioctl:VIDIOC_DQBUF\n");
-			//return -1;
+		//CLEAR(buf);
+		CLEAR(cap_buf);
+        CLEAR(disp_buf);
+        
+		disp_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+		disp_buf.memory = V4L2_MEMORY_USERPTR;
+		
+        ret =  ioctl(vid0_fd, VIDIOC_DQBUF, &disp_buf);
+		if (ret < 0) {
+			perror("VIDIOC_DQBUF for display failed\n");
+			//return ret;
 		}
 
-		/******************* V4L2 display ********************/
-		displaybuffer = get_display_buffer(vid0_fd);
-		if (NULL == displaybuffer) {
-			printf("Error in getting the  display buffer:VID1\n");
+		cap_buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+		cap_buf.memory = V4L2_MEMORY_USERPTR;
+		
+		ret = ioctl(capture_fd, VIDIOC_DQBUF, &cap_buf);
+		if (ret < 0) {
+			perror("VIDIOC_DQBUF for capture failed\n");
+			//return ret;
+		}
+
+		temp = cap_buf.m.userptr;
+		cap_buf.m.userptr = disp_buf.m.userptr;
+		disp_buf.m.userptr = temp;	
+
+        //printf("time:%lu    frame:%u\n", (unsigned long)time(NULL), captFrmCnt++);
+
+		ret = ioctl(capture_fd, VIDIOC_QBUF, &cap_buf);
+		if (ret < 0) {
+			perror("VIDIOC_QBUF for capture failed\n");
 			//return ret;
 		}
 		
-		src = buffers[buf.index].start;
+		ret = ioctl(vid0_fd, VIDIOC_QBUF, &disp_buf);
+		if (ret < 0) {
+			perror("VIDIOC_QBUF for display failed\n");
+			//return ret;
+		}
 		
-		dst     = (char *)calloc(294912, sizeof(char));
+		
+//			/* determine ready buffer */
+//			if (-1 == ioctl(capture_fd, VIDIOC_DQBUF, &buf))
+//			{
+//				if (EAGAIN == errno)
+//					continue;
+//				printf("StartCameraCaputre:ioctl:VIDIOC_DQBUF\n");
+//				//return -1;
+//			}
+//	
+//			/******************* V4L2 display ********************/
+//			displaybuffer = get_display_buffer(vid0_fd);
+//			if (NULL == displaybuffer) {
+//				printf("Error in getting the  display buffer:VID1\n");
+//				//return ret;
+//			}
+		
+//			src = buffers[buf.index].start;
+//			
+//			dst     = (char *)calloc(294912, sizeof(char));
 
       
 //	//        for (i = 0; i < 768; i += 4)
@@ -1802,106 +1870,106 @@ static void start_loop(void)
 //	        //}
 
 
-#ifdef ROTATE
-        char y_tmp_u,y_tmp_v;
-        for (i = 0; i < 768; i += 4)
-        {
-            pdst[0] = dst + i;
-            pdst[1] = dst + 768 + i;
-            psrc    = src + 294144 - 384*i;
-            for (j = 0; j < 384; j++)
-            {
-                k = j % 2;
-                // copy 4 bytes
-                *((unsigned int *)pdst[k]) = *((unsigned int *)psrc);
-                if(1 == k)
-                {
-                    *((unsigned char *)(pdst[k]+1)) = y_tmp_v;
-                    psrc += 768+4;
-                }
-                else
-                {
-                    y_tmp_v = *((unsigned char *)(psrc+3));
-                    psrc -= 768; // '9'
-                    y_tmp_u = *((unsigned char *)(psrc+1));
-                    *((unsigned char *)(pdst[k]+3)) = y_tmp_u;
-                }
-                pdst[k] += 1536;
-            }
-//            printf("Oops!\n");
-        }
-//        memcpy(dst, src, 294912);
-        memcpy(src, dst, 294912);
-#endif /* ROTATE */
-
-//			dest = displaybuffer;
-//	        printf("Oops!\n");
-//	
-//	        /* Display image onto requested video window */
-//	        for(i=0 ; i < 768; i++) 
+//	#ifdef ROTATE
+//	        char y_tmp_u,y_tmp_v;
+//	        for (i = 0; i < 768; i += 4)
 //	        {
-//	            memcpy(dest, src, 384*2);
-//	            src += 384*2;
-//	            dest += 384*2;
+//	            pdst[0] = dst + i;
+//	            pdst[1] = dst + 768 + i;
+//	            psrc    = src + 294144 - 384*i;
+//	            for (j = 0; j < 384; j++)
+//	            {
+//	                k = j % 2;
+//	                // copy 4 bytes
+//	                *((unsigned int *)pdst[k]) = *((unsigned int *)psrc);
+//	                if(1 == k)
+//	                {
+//	                    *((unsigned char *)(pdst[k]+1)) = y_tmp_v;
+//	                    psrc += 768+4;
+//	                }
+//	                else
+//	                {
+//	                    y_tmp_v = *((unsigned char *)(psrc+3));
+//	                    psrc -= 768; // '9'
+//	                    y_tmp_u = *((unsigned char *)(psrc+1));
+//	                    *((unsigned char *)(pdst[k]+3)) = y_tmp_u;
+//	                }
+//	                pdst[k] += 1536;
+//	            }
+//	//            printf("Oops!\n");
 //	        }
+//	//        memcpy(dst, src, 294912);
+//	        memcpy(src, dst, 294912);
+//	#endif /* ROTATE */
 //	
-	        free(dst);
-
-//	        if(quit)
-//	        {
-//	            fwrite((void *)buffers[buf.index].start,1,294912,fin_fd);
-//	            fwrite((void *)vid0Buf[buf.index].start,1,1572864,fout_fd);
-//	            return;
-//	        }
-        
-//	        printf("Oops!\n");
-//	        
-//	//	        for(h=0 ; h < 720; i++) 
+//	//			dest = displaybuffer;
+//	//	        printf("Oops!\n");
+//	//	
+//	//	        /* Display image onto requested video window */
+//	//	        for(i=0 ; i < 768; i++) 
 //	//	        {
-//	//	            for(w = 0; w<1024;w++)
-//	//	            {s
-//	//	                memcpy(dest, src, 1);
-//	//	                src++;
-//	//	                dest++;
-//	//	            }
+//	//	            memcpy(dest, src, 384*2);
+//	//	            src += 384*2;
+//	//	            dest += 384*2;
 //	//	        }
-//		
-//	        for(i=0 ; i < 768; i++) 
-//	        {
-//	            memset(dest, 0x00, 512*2);
-//	            dest += 512*2;
-//	            memcpy(dest, src, 384*2);
-//	            src += 384*2;
-//	            dest += 512*2;
-//	        }
-//	      
-
-//	    printf("Oops!!\n");
-
-		ret = put_display_buffer(vid0_fd, displaybuffer); // 这里displaybuffer==src
-    //printf("put_display_buffer\n");
-		if (ret < 0) {
-			printf("Error in putting the display buffer\n");
-			//return ret;
-		}
-		/***************** END V4L2 display ******************/
-        display_frame(VID1, displaybuffer); // 这里displaybuffer==src
-		
-		if (printfn)
-			printf("time:%lu    frame:%u\n", (unsigned long)time(NULL),
-		       		captFrmCnt++);
-
-		/* requeue the buffer */
-		if (-1 == ioctl(capture_fd, VIDIOC_QBUF, &buf))
-			printf("StartCameraCaputre:ioctl:VIDIOC_QBUF\n");
-		if (stress_test) {
-			start_loopCnt--;
-			if (start_loopCnt == 0) {
-				start_loopCnt = 50;
-				//break;
-				quit =1;
-			}
-		}
+//	//	
+//		        free(dst);
+//	
+//	//	        if(quit)
+//	//	        {
+//	//	            fwrite((void *)buffers[buf.index].start,1,294912,fin_fd);
+//	//	            fwrite((void *)vid0Buf[buf.index].start,1,1572864,fout_fd);
+//	//	            return;
+//	//	        }
+//	        
+//	//	        printf("Oops!\n");
+//	//	        
+//	//	//	        for(h=0 ; h < 720; i++) 
+//	//	//	        {
+//	//	//	            for(w = 0; w<1024;w++)
+//	//	//	            {s
+//	//	//	                memcpy(dest, src, 1);
+//	//	//	                src++;
+//	//	//	                dest++;
+//	//	//	            }
+//	//	//	        }
+//	//		
+//	//	        for(i=0 ; i < 768; i++) 
+//	//	        {
+//	//	            memset(dest, 0x00, 512*2);
+//	//	            dest += 512*2;
+//	//	            memcpy(dest, src, 384*2);
+//	//	            src += 384*2;
+//	//	            dest += 512*2;
+//	//	        }
+//	//	      
+//	
+//	//	    printf("Oops!!\n");
+//	
+//			ret = put_display_buffer(vid0_fd, displaybuffer); // 这里displaybuffer==src
+//	    //printf("put_display_buffer\n");
+//			if (ret < 0) {
+//				printf("Error in putting the display buffer\n");
+//				//return ret;
+//			}
+//			/***************** END V4L2 display ******************/
+//	        display_frame(VID1, displaybuffer); // 这里displaybuffer==src
+//			
+//			if (printfn)
+//				printf("time:%lu    frame:%u\n", (unsigned long)time(NULL),
+//			       		captFrmCnt++);
+//	
+//			/* requeue the buffer */
+//			if (-1 == ioctl(capture_fd, VIDIOC_QBUF, &buf))
+//				printf("StartCameraCaputre:ioctl:VIDIOC_QBUF\n");
+//			if (stress_test) {
+//				start_loopCnt--;
+//				if (start_loopCnt == 0) {
+//					start_loopCnt = 50;
+//					//break;
+//					quit =1;
+//				}
+//			}
 	}
 	ret = stop_capture(capture_fd);
 	if (ret < 0)
@@ -2190,4 +2258,52 @@ static int display_frame(char id, void *ptr_buffer)
 //			return -1;
 	return 0;
 }
+
+static int allocate_user_buffers(void)
+{
+    void *pool;
+	int i;
+
+	CMEM_AllocParams  alloc_params;
+	printf("calling cmem utilities for allocating frame buffers\n");
+	CMEM_init();
+
+	alloc_params.type = CMEM_POOL;
+	alloc_params.flags = CMEM_NONCACHED;
+	alloc_params.alignment = 32;
+	pool = CMEM_allocPool(0, &alloc_params);
+	
+	if (NULL == pool) 
+	{
+		printf("Failed to allocate cmem pool\n");
+		return -1;
+	}
+    else
+    {
+        printf("Successed to allocate cmem pool\n");
+    }
+	
+	
+	//buf_size = ALIGN((384*384*2),4096);
+	buf_size = 384*384*2;
+	printf("the buf size = %d \n", buf_size);
+	
+	for (i=0; i < MIN_BUFFERS; i++) {
+		user_io_buffers[i].user_addr = CMEM_alloc(buf_size, &alloc_params);
+		if (user_io_buffers[i].user_addr) {
+			user_io_buffers[i].phy_addr = CMEM_getPhys(user_io_buffers[i].user_addr);
+			if (0 == user_io_buffers[i].phy_addr) {
+				printf("Failed to get phy cmem buffer address\n");
+				return -1;
+			}
+		} else {
+			printf("Failed to allocate cmem buffer\n");
+			return -1;
+		}
+		printf("Got %p from CMEM, phy = %p\n", user_io_buffers[i].user_addr,
+			(void *)user_io_buffers[i].phy_addr);
+	}
+	return 0;
+}
+
 

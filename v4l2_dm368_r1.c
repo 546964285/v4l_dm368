@@ -89,8 +89,8 @@
 #define	OSD1_YPOS		250
 #define	VID0_XPOS		0
 #define	VID0_YPOS		0
-#define	VID1_XPOS		400
-#define	VID1_YPOS		200
+#define	VID1_XPOS		20
+#define	VID1_YPOS		100
 
 /* Zoom Params */
 #define	OSD0_HZOOM		0
@@ -377,11 +377,11 @@ int main(int argc, char **argv)
     //display_getinfo_control();
     display_start_streaming();
 
-    init_vid1_device();
-    init_osd0_device();
-    mmap_vid1();
-    mmap_osd0();
-    disable_all_windows();
+//	    init_vid1_device();
+//	    //init_osd0_device();
+//	    mmap_vid1();
+//	    //mmap_osd0();
+//	    disable_all_windows();
     start_loop();
 
     // TODO: release device and memory

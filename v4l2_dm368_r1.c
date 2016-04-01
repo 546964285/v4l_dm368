@@ -585,7 +585,7 @@ static void open_previewer(void)
 #endif
     
     
-#if 0
+#if 1
         /* 
             B Gb
             Gr R
@@ -596,7 +596,7 @@ static void open_previewer(void)
             prev_ctn_config.input.colp_olop= IPIPE_GREEN_BLUE;
 #endif
     
-#if 1
+#if 0
         /*
             Gr R
             B Gb

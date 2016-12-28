@@ -159,8 +159,9 @@ struct buf_info {
 	unsigned long phy_addr;
 };
 
-struct buf_info user_io_buffers[MIN_BUFFERS];
-
+//struct buf_info user_io_buffers[MIN_BUFFERS];
+struct buf_info capture_buffers[MIN_BUFFERS];
+struct buf_info display_buffers[MIN_BUFFERS];
 
 char *dev_name_prev = "/dev/davinci_previewer";
 char *dev_name_rsz = "/dev/davinci_resizer";
@@ -308,13 +309,13 @@ static int linearization_en;
 static int csc_en;
 static int vldfc_en;
 static int en_culling;
-static int buf_size;
-
+static int buf_size = ALIGN((1920*1080*2), 4096);
 static unsigned int n_buffers = 0;
 static unsigned long oper_mode_1;
 static unsigned long user_mode_1;
 static struct rsz_channel_config rsz_chan_config; // resizer channel config
 static struct rsz_single_shot_config rsz_ss_config;
+static struct imp_convert convert;
 static struct rsz_continuous_config rsz_ctn_config;
 static struct prev_channel_config prev_chan_config;
 static struct prev_single_shot_config prev_ss_config;
@@ -366,59 +367,24 @@ static int disable_all_windows(void);
 static int display_frame(char id, void *ptr_buffer);
 static int allocate_user_buffers(void);
 
-int main(int argc, char **argv)
-{
-	if (allocate_user_buffers() < 0) {
-			printf("Test fail\n");
-			exit(1);
-	}
-
-// open_device
-    open_resizer();
-    open_previewer();
-    open_capture();
-    open_all_windows();
-
-// init_capture
-    //capture_get_chip_id();
-    capture_query_capability();
-    capture_set_format();
-    capture_init_mmap();
-    capture_set_input();
-    //ccdc_config_raw();
-    capture_start_streaming();
-
-// init_display
-    open_display_dev();
-    display_query_capability();
-    display_request_buffers();
-    display_set_format();
-    display_get_format();
-    //display_init_mmap();
-    //display_getinfo_control();
-    display_start_streaming();
-
-//	    init_vid1_device();
-//	    init_osd0_device();
-//	    mmap_vid1();
-//	    mmap_osd0();
-//	    disable_all_windows();
-    
-    start_loop();
-
-    // TODO: release device and memory
-    
-    return 0;
-}
-
 static void open_resizer(void)
 {
-//    oper_mode_1 = 0;
-    oper_mode_1 = IMP_MODE_CONTINUOUS;
+////    oper_mode_1 = 0;
+//    oper_mode_1 = IMP_MODE_CONTINUOUS;
 
+//	  oper_mode_1 = 1;
+    oper_mode_1 = IMP_MODE_SINGLE_SHOT;
 //    printf("Configuring resizer in the chain mode\n");
 //    printf("Opening resizer device, %s\n",dev_name_rsz);
     resizer_fd = open(dev_name_rsz, O_RDWR);
+    if(resizer_fd <= 0) {
+		printf("Cannot open resize device \n");
+		//return -1;
+	}
+    else
+    {
+        printf("Success to open resize device \n");
+    }
 
     if (ioctl(resizer_fd, RSZ_S_OPER_MODE, &oper_mode_1) < 0)
     {
@@ -434,16 +400,23 @@ static void open_resizer(void)
 
     if (oper_mode_1 == user_mode_1)
     {
-    //    printf("RESIZER: Operating mode changed successfully to Continuous");
+    //    printf("RESIZER: Operating mode changed successfully to single shot mode");
+    	printf("RESIZER: Operating mode changed successfully to");
+		if (oper_mode_1 == IMP_MODE_SINGLE_SHOT) 
+			printf(" %s", "Single Shot\n");
+		else
+			printf(" %s", "Continuous\n");
     }
     else 
     {
-        //printf("RESIZER: Couldn't change operation mode to Continuous");
+        //printf("RESIZER: Couldn't change operation mode to single shot mode");
         close(resizer_fd);
     }
 
-    rsz_chan_config.oper_mode = IMP_MODE_CONTINUOUS;
+    //rsz_chan_config.oper_mode = IMP_MODE_CONTINUOUS;
+    rsz_chan_config.oper_mode = IMP_MODE_SINGLE_SHOT;
     rsz_chan_config.chain = 1;
+	//rsz_chan_config.chain = 0;
     rsz_chan_config.len = 0;
     rsz_chan_config.config = NULL; /* to set defaults in driver */
     if (ioctl(resizer_fd, RSZ_S_CONFIG, &rsz_chan_config) < 0) 
@@ -452,17 +425,52 @@ static void open_resizer(void)
         close(resizer_fd);
     }
 
-    CLEAR (rsz_ctn_config);
-    rsz_chan_config.oper_mode = IMP_MODE_CONTINUOUS;
+    CLEAR (rsz_ss_config);
+    //rsz_chan_config.oper_mode = IMP_MODE_CONTINUOUS;
+    rsz_chan_config.oper_mode = IMP_MODE_SINGLE_SHOT;
     rsz_chan_config.chain = 1;
-    rsz_chan_config.len = sizeof(struct rsz_continuous_config);
-    rsz_chan_config.config = &rsz_ctn_config;
+	//rsz_chan_config.chain = 0;
+    //rsz_chan_config.len = sizeof(struct rsz_continuous_config);
+    rsz_chan_config.len = sizeof(struct rsz_single_shot_config);
+    //rsz_chan_config.config = &rsz_ctn_config;
+    rsz_chan_config.config = &rsz_ss_config;
     if (ioctl(resizer_fd, RSZ_G_CONFIG, &rsz_chan_config) < 0) 
     {
     	perror("Error in getting default configuration for continuous mode\n");
         close(resizer_fd);
     }
 
+#if 0
+	rsz_ss_config.input.image_width = 384;
+	rsz_ss_config.input.image_height = 384;
+	rsz_ss_config.input.ppln = rsz_ss_config.input.image_width + 8;
+	rsz_ss_config.input.lpfr = rsz_ss_config.input.image_height + 10;
+    rsz_ss_config.input.line_length = 384*2;
+	rsz_ss_config.input.clk_div.m = 1;
+	rsz_ss_config.input.clk_div.n = 5;
+	rsz_ss_config.input.pix_fmt = IPIPE_UYVY;
+#endif
+
+	rsz_ss_config.output1.pix_fmt = IPIPE_UYVY;
+	rsz_ss_config.output1.enable = 1;
+	rsz_ss_config.output1.width = 480;
+	rsz_ss_config.output1.height = 480;
+	rsz_ss_config.output2.enable = 0;
+
+	rsz_chan_config.oper_mode = IMP_MODE_SINGLE_SHOT;
+	//rsz_chan_config.chain = 0;
+	rsz_chan_config.chain = 1;
+	rsz_chan_config.len = sizeof(struct rsz_single_shot_config);
+	if (ioctl(resizer_fd, RSZ_S_CONFIG, &rsz_chan_config) < 0) {
+    	perror("Error in setting default configuration for single shot mode\n");
+        close(resizer_fd);
+    }
+    else
+    {
+        printf("Resizer initialized\n");
+    }
+
+#if 0
     rsz_ctn_config.output1.enable = 1;
     rsz_ctn_config.output2.enable = 0;
     rsz_chan_config.oper_mode = IMP_MODE_CONTINUOUS;
@@ -473,6 +481,7 @@ static void open_resizer(void)
     	perror("Error in setting default configuration for continuous mode\n");
         close(resizer_fd);
     }
+#endif
 
 #if 0
 
@@ -540,7 +549,8 @@ out:
 
 static void open_previewer(void)
 {
-    oper_mode_1 = IMP_MODE_CONTINUOUS; // same as resizer
+    //oper_mode_1 = IMP_MODE_CONTINUOUS; // same as resizer
+    oper_mode_1 = IMP_MODE_SINGLE_SHOT;
 
     preview_fd = open(dev_name_prev, O_RDWR);
 
@@ -562,17 +572,23 @@ static void open_previewer(void)
         close(preview_fd);
     }
 
-    if (oper_mode_1 == user_mode_1) 
-    {   
-        //printf("Operating mode changed successfully to continuous in previewer");
-    }
-	else 
+    if (oper_mode_1 == user_mode_1)
     {
-        //printf("failed to set mode to continuous in previewer\n");
+    //    printf("PREVIEW: Operating mode changed successfully to single shot mode");
+    	printf("PREVIEW: Operating mode changed successfully to");
+		if (oper_mode_1 == IMP_MODE_SINGLE_SHOT) 
+			printf(" %s", "Single Shot\n");
+		else
+			printf(" %s", "Continuous\n");
+    }
+    else 
+    {
+        //printf("PREVIEW: Couldn't change operation mode to single shot mode");
         close(preview_fd);
     }
 
-    prev_chan_config.oper_mode = IMP_MODE_CONTINUOUS;
+    //prev_chan_config.oper_mode = IMP_MODE_CONTINUOUS;
+    prev_chan_config.oper_mode = IMP_MODE_SINGLE_SHOT;
     prev_chan_config.len = 0;
     prev_chan_config.config = NULL; /* to set defaults in driver */
     if (ioctl(preview_fd, PREV_S_CONFIG, &prev_chan_config) < 0) 
@@ -581,20 +597,58 @@ static void open_previewer(void)
         close(preview_fd);
     }
 
-    CLEAR (prev_ctn_config);
-    prev_chan_config.oper_mode = IMP_MODE_CONTINUOUS;
-    prev_chan_config.len = sizeof(struct prev_continuous_config);
-    prev_chan_config.config = &prev_ctn_config;
+    CLEAR (prev_ss_config);
+    prev_chan_config.oper_mode = IMP_MODE_SINGLE_SHOT;
+    prev_chan_config.len = sizeof(struct prev_single_shot_config);
+    prev_chan_config.config = &prev_ss_config;
+//	    CLEAR (prev_ctn_config);
+//	    prev_chan_config.oper_mode = IMP_MODE_CONTINUOUS;
+//	    prev_chan_config.len = sizeof(struct prev_continuous_config);
+//	    prev_chan_config.config = &prev_ctn_config;
     if (ioctl(preview_fd, PREV_G_CONFIG, &prev_chan_config) < 0) 
     {
         perror("Error in getting configuration from driver\n");
         close(preview_fd);
     }
 
-    prev_chan_config.oper_mode = IMP_MODE_CONTINUOUS;
-    prev_chan_config.len = sizeof(struct prev_continuous_config);
-    prev_chan_config.config = &prev_ctn_config;
-        
+//	    prev_chan_config.oper_mode = IMP_MODE_CONTINUOUS;
+//	    prev_chan_config.len = sizeof(struct prev_continuous_config);
+//	    prev_chan_config.config = &prev_ctn_config;
+    prev_chan_config.oper_mode = IMP_MODE_SINGLE_SHOT;
+	prev_chan_config.len = sizeof(struct prev_single_shot_config);
+	prev_chan_config.config = &prev_ss_config;
+    prev_ss_config.input.image_width = 384;
+	prev_ss_config.input.image_height = 384;
+	//prev_ss_config.input.ppln= 384 * 1.5;
+    prev_ss_config.input.ppln= 384 + 8;
+	prev_ss_config.input.lpfr = 384 + 10;
+//	    prev_ss_config.input.pix_fmt = IPIPE_BAYER;
+//	    prev_ss_config.input.data_shift = IPIPEIF_5_1_BITS11_0;
+    //prev_ss_config.input.pix_fmt = IPIPE_UYVY;
+    //prev_ss_config.input.pix_fmt = IPIPE_BAYER_12BIT_PACK;
+    //prev_ss_config.input.pix_fmt = IPIPE_BAYER_8BIT_PACK_ALAW;
+    prev_ss_config.input.pix_fmt = IPIPE_BAYER_8BIT_PACK;
+
+//	    prev_ss_config.input.colp_elep= IPIPE_BLUE;
+//	    prev_ss_config.input.colp_elop= IPIPE_GREEN_BLUE;
+//	    prev_ss_config.input.colp_olep= IPIPE_GREEN_RED;
+//	    prev_ss_config.input.colp_olop= IPIPE_RED;
+//	
+//	    prev_ctn_config.input.colp_elep= IPIPE_GREEN_BLUE;
+//	    prev_ctn_config.input.colp_elop= IPIPE_BLUE;
+//	    prev_ctn_config.input.colp_olep= IPIPE_RED;
+//	    prev_ctn_config.input.colp_olop= IPIPE_GREEN_RED;
+	
+    prev_ss_config.input.colp_elep= IPIPE_GREEN_RED;
+    prev_ss_config.input.colp_elop= IPIPE_RED;
+    prev_ss_config.input.colp_olep= IPIPE_BLUE;
+    prev_ss_config.input.colp_olop= IPIPE_GREEN_BLUE;
+
+//	    prev_ss_config.input.colp_elep= IPIPE_RED;
+//	    prev_ss_config.input.colp_elop= IPIPE_GREEN_RED;
+//	    prev_ss_config.input.colp_olep= IPIPE_GREEN_BLUE;
+//	    prev_ss_config.input.colp_olop= IPIPE_BLUE;
+    
 #if 0
         /*
             Gb B
@@ -783,6 +837,10 @@ static void open_capture(void)
         fprintf (stderr, "Cannot open '%s': %d, %s\n", CAPTURE_DEVICE, errno, strerror (errno));
         exit (EXIT_FAILURE);
     }
+    else
+    {
+        printf("Success to open capture\n");
+    }
 }
 
 static void capture_get_chip_id(void)
@@ -889,7 +947,12 @@ static void capture_set_format(void)
         printf("VIDIOC_S_FMT failed.\n");
         //return FAIL;
     }
+    else
+    {
+        printf("VIDIOC_S_FMT Done\n");
+    }
 
+    
     // frame-rate
     CLEAR (parm);
     parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -1252,7 +1315,7 @@ static void capture_start_streaming(void)
         buf.length = buf_size;
         //buf.length = 294912;
         buf.length = 1572864;
-        buf.m.userptr = (unsigned long)user_io_buffers[i].user_addr;
+        buf.m.userptr = (unsigned long)capture_buffers[i].user_addr;
         if (-1 == ioctl(capture_fd, VIDIOC_QBUF, &buf))
         {
             printf("fail: test capture stream queue buffer %d\n", i);
@@ -1376,8 +1439,10 @@ static void display_set_format(void)
     //setfmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
     setfmt.fmt.pix.pixelformat = V4L2_PIX_FMT_UYVY;
 //    setfmt.fmt.pix.pixelformat = V4L2_PIX_FMT_NV21;
-    setfmt.fmt.pix.width = 384;
-    setfmt.fmt.pix.height = 384;
+    //setfmt.fmt.pix.width = 384;
+    //setfmt.fmt.pix.height = 384;
+	setfmt.fmt.pix.width = 480;
+    setfmt.fmt.pix.height = 480;
     //setfmt.fmt.pix.width = 768;
     //setfmt.fmt.pix.height = 1024;
     //setfmt.fmt.win.w.height=384;
@@ -1402,6 +1467,7 @@ static void display_set_format(void)
         printf("success: set format for display\n");
     }
 
+#if 0
     struct v4l2_crop crop;
     CLEAR(crop);
 
@@ -1426,6 +1492,8 @@ static void display_set_format(void)
     {
         printf("success: set crop for display\n");
     }
+#endif
+
 }
 
 static void display_get_format(void)
@@ -1506,8 +1574,8 @@ static void display_init_mmap(void)
             vid0Buf[i].start,
             vid0Buf[i].length);
 
-        //memset(vid0Buf[i].start, 0x80, buf.length);
-		memset(vid0Buf[i].start, 0x00, buf.length);
+        memset(vid0Buf[i].start, 0x80, buf.length);
+		//memset(vid0Buf[i].start, 0x00, buf.length);
     }
 }
 
@@ -1533,6 +1601,7 @@ static void display_start_streaming(void)
     int i = 0, ret;
     enum v4l2_buf_type type;
 
+// Enqueue buffers 
 // Queue all the buffers for the initial running
     //printf("6. Test enqueuing of buffers - ");
     for (i = 0; i < reqbuf.count; i++)
@@ -1545,8 +1614,10 @@ static void display_start_streaming(void)
         buf.memory = V4L2_MEMORY_USERPTR;
         buf.index = i;
         //buf.length = 294912;
-        buf.length = 1572864;
-        buf.m.userptr = (unsigned long)user_io_buffers[i].user_addr;
+        //buf.length = 1572864;
+        buf.length = 480*480*2;
+        //buf.length = 720*480*2;
+        buf.m.userptr = (unsigned long)display_buffers[i].user_addr;
         ret = ioctl(vid0_fd, VIDIOC_QBUF, &buf);
 
         if(ret < 0)
@@ -1648,7 +1719,7 @@ static void start_loop(void)
 	int ret, quit=0;
 	struct v4l2_buffer buf;
 	struct v4l2_buffer cap_buf, disp_buf;
-	static int captFrmCnt = 0, printfn = 0, stress_test = 1, start_loopCnt = 20;
+	static int frame_count = 0, printfn = 0, stress_test = 1, start_loopCnt = 20;
 	unsigned char *displaybuffer = NULL;
 	unsigned long temp;
 	int i,j,k;
@@ -1657,7 +1728,17 @@ static void start_loop(void)
     unsigned char * psrc       = NULL;
     unsigned char * pdst[2]   = {NULL, NULL};
 	void *src, *dest;
-	
+
+    fd_set fds;
+    struct timeval tv;
+    int r;
+    //unsigned long temp;
+    int sizeimage;
+
+    FD_ZERO(&fds);
+    FD_SET(capture_fd, &fds);
+
+    
 //	    FILE * fin_fd;
 //	    FILE * fout_fd;
 //	
@@ -1689,6 +1770,19 @@ static void start_loop(void)
 		//CLEAR(buf);
 		CLEAR(cap_buf);
         CLEAR(disp_buf);
+        tv.tv_sec = 2;
+        tv.tv_usec = 0;
+        r = select(capture_fd + 1, &fds, NULL, NULL, &tv);
+        if (-1 == r) 
+        {
+            if (EINTR == errno)
+                continue;
+            printf("StartCameraCapture:select\n");
+            //return -1;
+        }
+        if (0 == r)
+            continue;
+
         
 		disp_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
 		disp_buf.memory = V4L2_MEMORY_USERPTR;
@@ -1708,9 +1802,26 @@ static void start_loop(void)
 			//return ret;
 		}
 
-		temp = cap_buf.m.userptr;
-		cap_buf.m.userptr = disp_buf.m.userptr;
-		disp_buf.m.userptr = temp;	
+		//
+		if(do_resize(
+				resizer_fd,
+				384,
+				384,
+				(void *)cap_buf.m.userptr,
+				(void *)disp_buf.m.userptr,
+				480,
+				480
+			)< 0
+		){
+			printf("do_resize error\n");
+			
+		}
+			
+		
+
+//			temp = cap_buf.m.userptr;
+//			cap_buf.m.userptr = disp_buf.m.userptr;
+//			disp_buf.m.userptr = temp;	
 
         //printf("time:%lu    frame:%u\n", (unsigned long)time(NULL), captFrmCnt++);
 
@@ -1719,13 +1830,21 @@ static void start_loop(void)
 			perror("VIDIOC_QBUF for capture failed\n");
 			//return ret;
 		}
+
+        sizeimage = 480 * 480 * 2;
+		disp_buf.length = ALIGN(sizeimage, 4096);
 		
 		ret = ioctl(vid0_fd, VIDIOC_QBUF, &disp_buf);
 		if (ret < 0) {
 			perror("VIDIOC_QBUF for display failed\n");
 			//return ret;
 		}
-		
+
+        if (printfn) {
+			printf("frame:%5u, ", frame_count);
+			printf("buf.timestamp:%lu:%lu\n",
+				cap_buf.timestamp.tv_sec, cap_buf.timestamp.tv_usec);
+		}
 		
 //			/* determine ready buffer */
 //			if (-1 == ioctl(capture_fd, VIDIOC_DQBUF, &buf))
@@ -1971,10 +2090,10 @@ static void start_loop(void)
 //				}
 //			}
 	}
-	ret = stop_capture(capture_fd);
-	if (ret < 0)
-		printf("Error in VIDIOC_STREAMOFF:capture\n");
-	//return ret;
+//		ret = stop_capture(capture_fd);
+//		if (ret < 0)
+//			printf("Error in VIDIOC_STREAMOFF:capture\n");
+//		//return ret;
 }
 
 
@@ -2285,14 +2404,14 @@ static int allocate_user_buffers(void)
 	
 	
 	//buf_size = ALIGN((384*384*2),4096);
-	buf_size = 384*384*2;
-	printf("the buf size = %d \n", buf_size);
-	
+	//buf_size = 720*480*2;
+	//printf("the buf size = %d \n", buf_size);
+	printf("Allocating capture buffers :buf size = %d \n", buf_size);
 	for (i=0; i < MIN_BUFFERS; i++) {
-		user_io_buffers[i].user_addr = CMEM_alloc(buf_size, &alloc_params);
-		if (user_io_buffers[i].user_addr) {
-			user_io_buffers[i].phy_addr = CMEM_getPhys(user_io_buffers[i].user_addr);
-			if (0 == user_io_buffers[i].phy_addr) {
+		capture_buffers[i].user_addr = CMEM_alloc(buf_size, &alloc_params);
+		if (capture_buffers[i].user_addr) {
+			capture_buffers[i].phy_addr = CMEM_getPhys(capture_buffers[i].user_addr);
+			if (0 == capture_buffers[i].phy_addr) {
 				printf("Failed to get phy cmem buffer address\n");
 				return -1;
 			}
@@ -2300,10 +2419,172 @@ static int allocate_user_buffers(void)
 			printf("Failed to allocate cmem buffer\n");
 			return -1;
 		}
-		printf("Got %p from CMEM, phy = %p\n", user_io_buffers[i].user_addr,
-			(void *)user_io_buffers[i].phy_addr);
+		printf("Got %p from CMEM, phy = %p\n", capture_buffers[i].user_addr,
+			(void *)capture_buffers[i].phy_addr);
 	}
-	return 0;
+
+    printf("Allocating display buffers :buf size = %d \n", buf_size);
+    for (i=0; i < MIN_BUFFERS; i++) {
+        display_buffers[i].user_addr = CMEM_alloc(buf_size, &alloc_params);
+		if (display_buffers[i].user_addr) {
+			display_buffers[i].phy_addr = CMEM_getPhys(display_buffers[i].user_addr);
+			if (0 == display_buffers[i].phy_addr) {
+				printf("Failed to get phy cmem buffer address\n");
+				return -1;
+			}
+		} else {
+			printf("Failed to allocate cmem buffer\n");
+			return -1;
+		}
+		printf("Got %p from CMEM, phy = %p\n", display_buffers[i].user_addr,
+			(void *)display_buffers[i].phy_addr);
+	}
+    
+    return 0;
 }
+
+int do_resize(
+	int rsz_fd,
+	int in_width,
+	int in_height,
+	void *capbuf_addr, 
+	void *display_buf,
+	int out_width,
+	int out_height
+)
+{
+	int index;
+
+	CLEAR (convert);
+	convert.in_buff.buf_type = IMP_BUF_IN;
+	convert.in_buff.index = -1;
+	convert.in_buff.offset = (unsigned int)capbuf_addr;
+	convert.in_buff.size = in_width*in_height*2;
+	//convert.in_buff.size = 384*384*2;
+
+	for (index=0; index < MIN_BUFFERS; index++) {
+		if (capture_buffers[index].user_addr == capbuf_addr) {
+			break;
+		}
+	}
+
+	if (index == MIN_BUFFERS) {
+		printf("Couldn't find display buffer index\n");
+		return -1;
+	}
+
+	convert.out_buff1.buf_type = IMP_BUF_OUT1;
+	convert.out_buff1.index = -1;
+	convert.out_buff1.offset = (unsigned int)display_buf;
+	//convert.out_buff1.size = out_width * out_height * BYTESPERPIXEL;
+	convert.out_buff1.size = out_width * out_height * 2;
+	//convert.out_buff1.size = 480 * 480 * BYTESPERPIXEL;
+
+	
+	if (ioctl(rsz_fd, RSZ_RESIZE, &convert) < 0) {
+		perror("Error in doing resizer\n");
+		return -1;
+	} 
+	return 0;
+	
+}
+
+int cleanup_capture(int fd)
+{
+	int i;
+	enum v4l2_buf_type type;
+	type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+	
+	if (-1 == ioctl(fd, VIDIOC_STREAMOFF, &type)) {
+		perror("cleanup_capture :ioctl:VIDIOC_STREAMOFF");
+	}
+
+	if (close(fd) < 0)
+		perror("Error in closing device\n");
+}
+
+int cleanup_preview(int fd)
+{
+	int i;
+	if (close(fd) < 0)
+		perror("Error in closing preview device\n");
+}
+
+int cleanup_resize(int fd)
+{
+	int i;
+	if (close(fd) < 0)
+		perror("Error in closing resize device\n");
+}
+
+int cleanup_display(int fd)
+{
+	int i;
+	enum v4l2_buf_type type;
+
+	type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+
+	if (-1 == ioctl(fd, VIDIOC_STREAMOFF, &type)) {
+		perror("cleanup_display :ioctl:VIDIOC_STREAMOFF");
+	}
+
+	if (close(fd) < 0)
+		perror("Error in closing device\n");
+}
+
+int main(int argc, char **argv)
+{
+	if (allocate_user_buffers() < 0) {
+			printf("Test fail\n");
+			exit(1);
+	}
+
+// open_device
+    open_resizer();
+    open_previewer();
+    open_capture();
+//	    open_all_windows();
+	
+// init_capture
+//	    //capture_get_chip_id();
+//	    capture_query_capability();
+    capture_set_format();
+    capture_init_mmap();
+//	    capture_set_input();
+//	    //ccdc_config_raw();
+    capture_start_streaming();
+//	
+// init_display
+    open_display_dev();
+//	    display_query_capability();
+    display_set_format();
+//	    display_get_format();
+//	    //display_init_mmap();
+//	    //display_getinfo_control();
+    display_request_buffers();
+    display_start_streaming();
+	
+//	//	    init_vid1_device();
+//	//	    init_osd0_device();
+//	//	    mmap_vid1();
+//	//	    mmap_osd0();
+//	//	    disable_all_windows();
+    
+    start_loop();
+	
+    // TODO: release device and memory
+    printf("Cleaning capture\n");
+	cleanup_capture(capture_fd);
+	printf("Cleaning display\n");
+	cleanup_display(vid0_fd);
+	printf("Cleaning display - end\n");
+	cleanup_resize(resizer_fd);
+	printf("closing resize - end\n");
+    cleanup_preview(preview_fd);
+	printf("closing resize - end\n");
+    
+    return 0;
+}
+
 
 

@@ -453,8 +453,8 @@ static void open_resizer(void)
 
 	rsz_ss_config.output1.pix_fmt = IPIPE_UYVY;
 	rsz_ss_config.output1.enable = 1;
-	rsz_ss_config.output1.width = 480;
-	rsz_ss_config.output1.height = 480;
+	rsz_ss_config.output1.width = 640;
+	rsz_ss_config.output1.height = 640;
 	rsz_ss_config.output2.enable = 0;
 
 	rsz_chan_config.oper_mode = IMP_MODE_SINGLE_SHOT;
@@ -1441,8 +1441,8 @@ static void display_set_format(void)
 //    setfmt.fmt.pix.pixelformat = V4L2_PIX_FMT_NV21;
     //setfmt.fmt.pix.width = 384;
     //setfmt.fmt.pix.height = 384;
-	setfmt.fmt.pix.width = 480;
-    setfmt.fmt.pix.height = 480;
+	setfmt.fmt.pix.width = 640;
+    setfmt.fmt.pix.height = 640;
     //setfmt.fmt.pix.width = 768;
     //setfmt.fmt.pix.height = 1024;
     //setfmt.fmt.win.w.height=384;
@@ -1615,7 +1615,7 @@ static void display_start_streaming(void)
         buf.index = i;
         //buf.length = 294912;
         //buf.length = 1572864;
-        buf.length = 480*480*2;
+        buf.length = 640*640*2;
         //buf.length = 720*480*2;
         buf.m.userptr = (unsigned long)display_buffers[i].user_addr;
         ret = ioctl(vid0_fd, VIDIOC_QBUF, &buf);
@@ -1809,8 +1809,8 @@ static void start_loop(void)
 				384,
 				(void *)cap_buf.m.userptr,
 				(void *)disp_buf.m.userptr,
-				480,
-				480
+				640,
+				640
 			)< 0
 		){
 			printf("do_resize error\n");
@@ -1831,7 +1831,7 @@ static void start_loop(void)
 			//return ret;
 		}
 
-        sizeimage = 480 * 480 * 2;
+        sizeimage = 640 * 640 * 2;
 		disp_buf.length = ALIGN(sizeimage, 4096);
 		
 		ret = ioctl(vid0_fd, VIDIOC_QBUF, &disp_buf);

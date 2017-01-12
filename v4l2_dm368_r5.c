@@ -357,15 +357,22 @@ static void display_init_mmap(void);
 static void display_getinfo_control(void);
 static void display_start_streaming(void);
 static void start_loop(void);
+static int open_osd0(void);
+static int open_osd1(void);
 static int open_all_windows(void);
 static void close_all_windows(void);
 static void init_vid1_device(void);
 static void init_osd0_device(void);
+static void init_osd1_device(void);
 static int mmap_vid1(void);
 static int mmap_osd0(void);
+static int mmap_osd1(void);
 static int disable_all_windows(void);
 static int display_frame(char id, void *ptr_buffer);
 static int allocate_user_buffers(void);
+static int display_bitmap_osd0(void);
+static int display_bitmap_osd1(void);
+static int flip_bitmap_buffers(int fd, int buf_index);
 
 static void open_resizer(void)
 {
@@ -1467,15 +1474,15 @@ static void display_set_format(void)
         printf("success: set format for display\n");
     }
 
-#if 0
+#if 1
     struct v4l2_crop crop;
     CLEAR(crop);
 
     crop.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-    crop.c.height=384;
-    crop.c.width=384;
-    crop.c.top=200;
-    crop.c.left=10;
+    crop.c.height=640;
+    crop.c.width=640;
+    crop.c.top=64;
+    crop.c.left=320;
 
     ret = ioctl(vid0_fd, VIDIOC_S_CROP, &crop);
     if (ret < 0) 
@@ -1763,6 +1770,8 @@ static void start_loop(void)
 
 	CLEAR(cap_buf);
 	CLEAR(disp_buf);
+
+    display_bitmap_osd0();
 
 	//while (!quit)
 	while(1)
@@ -2097,6 +2106,28 @@ static void start_loop(void)
 }
 
 
+static int open_osd0(void)
+{
+	if ((fd_osd0 = open(OSD0_DEVICE, O_RDWR)) < 0)
+		goto open_osd0_exit;
+	return SUCCESS;
+      open_osd0_exit:
+	if (fd_osd0)
+		close(fd_osd0);
+	return FAILURE;
+}
+
+static int open_osd1(void)
+{
+	if ((fd_osd1 = open(OSD1_DEVICE, O_RDWR)) < 0)
+		goto open_osd1_exit;
+	return SUCCESS;
+      open_osd1_exit:
+	if (fd_osd0)
+		close(fd_osd0);
+	return FAILURE;
+}
+
 static int open_all_windows(void)
 {
 	if ((fd_vid0 = open(FBVID0_DEVICE, O_RDWR)) < 0)
@@ -2218,12 +2249,12 @@ static void init_osd0_device(void)
 
 	if (ioctl(fd_osd0, FBIO_SETPOSX, test_data.osd0_xpos) < 0)
 	{
-		printf("\nFailed  FBIO_SETPOSX");
+		printf("\nFailed osd0 FBIO_SETPOSX\n\n");
 		//return FAILURE;
 	}
 	if (ioctl(fd_osd0, FBIO_SETPOSY, test_data.osd0_ypos) < 0)
 	{
-		printf("\nFailed  FBIO_SETPOSY");
+		printf("\nFailed osd0 FBIO_SETPOSY\n\n");
 		//return FAILURE;
 	}
 
@@ -2235,6 +2266,80 @@ static void init_osd0_device(void)
 	}
 }
 
+static void init_osd1_device(void)
+{
+    vpbe_window_position_t pos;
+    vpbe_blink_option_t blinkop;
+    
+    if (ioctl(fd_osd1, FBIOGET_FSCREENINFO, &osd1_fixInfo) < 0)
+    {
+        printf("\nFailed FBIOGET_FSCREENINFO osd1");
+        //return FAILURE;
+    }
+
+    // Get Existing var_screeninfo for osd0 window
+	if (ioctl(fd_osd1, FBIOGET_VSCREENINFO, &osd1_varInfo) < 0)
+	{
+		printf("\nFailed FBIOGET_VSCREENINFO");
+		//return FAILURE;
+	}
+
+	if (ioctl(fd_osd1, FBIO_GET_BLINK_INTERVAL, &blinkop) < 0)
+	{
+		printf("\nFailed FBIO_GET_BLINK_INTERVAL\n");
+		//return FAILURE;
+	}
+	blinkop.blinking = VPBE_ENABLE;
+	blinkop.interval = 1000;
+	if (ioctl(fd_osd1, FBIO_SET_BLINK_INTERVAL, &blinkop) < 0)
+	{
+		printf("\nFailed FBIO_SET_BLINK_INTERVAL\n");
+		//return FAILURE;
+	}
+    // Modify the resolution and bpp as required
+	osd1_varInfo.xres = test_data.osd1_width;
+	osd1_varInfo.yres = test_data.osd1_height;
+	osd1_varInfo.bits_per_pixel = test_data.osd1_bpp;
+	osd1_varInfo.vmode = test_data.osd1_vmode;
+    osd1_varInfo.xres_virtual = test_data.osd1_width;
+	// Change the virtual Y-resolution for buffer flipping (2 buffers)
+	osd1_varInfo.yres_virtual = osd1_varInfo.yres * OSD_NUM_BUFS;
+    osd1_varInfo.nonstd = 1;
+
+	// Set osd1 window format
+	if (ioctl(fd_osd1, FBIOPUT_VSCREENINFO, &osd1_varInfo) < 0)
+	{
+		printf("\nFailed FBIOPUT_VSCREENINFO for osd0");
+		//return FAILURE;
+	}
+
+    // Set window position
+	pos.xpos = test_data.osd1_xpos;
+	pos.ypos = test_data.osd1_ypos;
+
+	if (ioctl(fd_osd1, FBIO_SETPOSX, test_data.osd1_xpos) < 0)
+	{
+		printf("\nFailed osd1 FBIO_SETPOSX\n\n");
+		//return FAILURE;
+	}
+	if (ioctl(fd_osd1, FBIO_SETPOSY, test_data.osd1_ypos) < 0)
+	{
+		printf("\nFailed osd1 FBIO_SETPOSY\n\n");
+		//return FAILURE;
+	}
+    if (ioctl(fd_osd1, FBIO_ENABLE_DISABLE_ATTRIBUTE_WIN, 1) < 0)
+	{
+		printf("\nFailed FBIO_ENABLE_DISABLE_ATTRIBUTE_WIN");
+		//return FAILURE;
+	}
+
+	// Enable the window
+	if (ioctl(fd_osd1, FBIOBLANK, 0))
+	{
+		printf("Error enabling OSD1\n");
+		//return FAILURE;
+	}
+}
 static int mmap_vid1(void)
 {
 	int i;
@@ -2261,9 +2366,11 @@ static int mmap_osd0(void)
 {
 	int i;
 	osd0_size = osd0_fixInfo.line_length * osd0_varInfo.yres;
+	//osd0_size = osd0_varInfo.xres*osd0_varInfo.yres*2;
+    printf("osd0_size = %d\n",osd0_size);
 
 	/* Map the osd0 buffers to user space */
-	osd0_display[0] = (char *)mmap(NULL, osd0_size * OSD_NUM_BUFS,
+	osd0_display[0] = (char *)mmap(NULL, osd0_size *( OSD_NUM_BUFS-1),
 				       PROT_READ | PROT_WRITE, MAP_SHARED,
 				       fd_osd0, 0);
 
@@ -2276,6 +2383,33 @@ static int mmap_osd0(void)
 		osd0_display[i + 1] = osd0_display[i] + osd0_size;
 		printf("Display buffer %d mapped to address %#lx\n", i + 1,
 		       (unsigned long)osd0_display[i + 1]);
+	}
+	return SUCCESS;
+}
+
+/******************************************************************************/
+static int mmap_osd1(void)
+{
+	int i;
+	osd1_size = osd1_fixInfo.line_length * osd1_varInfo.yres;
+	//osd1_size = osd1_varInfo.xres*osd1_varInfo.yres;
+	printf("osd1_size = %d\n",osd1_size);
+	
+	/* Map the osd1 buffers to user space */
+	osd1_display[0] = (char *)mmap(NULL,
+				       osd1_size * OSD_NUM_BUFS,
+				       PROT_READ | PROT_WRITE,
+				       MAP_SHARED, fd_osd1, 0);
+
+	if (osd1_display[0] == MAP_FAILED) {
+		printf("\nFailed mmap on %s", OSD0_DEVICE);
+		return FAILURE;
+	}
+
+	for (i = 0; i < OSD_NUM_BUFS - 1; i++) {
+		osd1_display[i + 1] = osd1_display[i] + osd1_size;
+		printf("Display buffer %d mapped to address %#lx\n", i + 1,
+		       (unsigned long)osd1_display[i + 1]);
 	}
 	return SUCCESS;
 }
@@ -2532,6 +2666,71 @@ int cleanup_display(int fd)
 		perror("Error in closing device\n");
 }
 
+static int display_bitmap_osd0(void)
+{
+	static unsigned int nDisplayIdx = 1;
+	static unsigned int nWorkingIndex = 0;
+	int x,y;
+	char *dst;
+	char *src;
+	int fd;
+
+	dst = osd0_display[nWorkingIndex];
+	if (dst == NULL)
+		return -1;
+	fd = fd_osd0;
+#if 0
+	if (rgb565_enable == 1) {	/* RGB565 */
+	    //printf("clear osd0 mod 1\n");
+		src = (char *)rgb16;
+		for (y = 0; y < test_data.osd0_height; y++) {
+			memcpy(dst, src, (test_data.osd0_width * 2));
+			dst += osd0_fixInfo.line_length;
+			src += (704 * 2);
+		}
+	} else if (rgb565_enable == 2) {	/* 8 bit bitmap */
+	    //printf("clear osd0 mod 2\n");
+		src = (char *)test_8;
+		for (y = 0; y < test_data.osd0_height; y++) {
+			memcpy(dst, src, (test_data.osd0_width));
+			dst += osd0_fixInfo.line_length;
+			src += (704);
+		}
+	} else	if (rgb565_enable == 3)		/* 1/2/4 bit bitmap and attribute */
+	{
+	    //printf("clear osd0 mod 3\n");
+		memset(dst, test_data.osd0_coloridx, osd0_size);
+    } else
+#endif
+    {
+        //printf("clear osd0\n");
+        //memset(dst, 0x00, osd0_size);
+
+        for (y = 0; y < test_data.osd0_height; y++) {
+            //memset(dst, 0x80, (test_data.osd0_width * 2));// 16 bit mode, osd0_fixInfo.line_length=test_data.osd0_width * 2
+            for(x=0;x<osd0_fixInfo.line_length;x++)
+            {
+                if(x%2==0)
+                {
+                    *(dst+x)=0x00;//lo-byte
+                }
+                else
+                {
+                    *(dst+x)=0x00;//hi-byte
+                }
+            }
+            dst += osd0_fixInfo.line_length;
+        }
+    }
+
+	//nWorkingIndex = (nWorkingIndex + 1) % OSD_NUM_BUFS;
+	//nDisplayIdx = (nDisplayIdx + 1) % OSD_NUM_BUFS;
+
+//	if ((flip_bitmap_buffers(fd, nDisplayIdx)) < 0)
+//		return -1;
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	if (allocate_user_buffers() < 0) {
@@ -2543,7 +2742,9 @@ int main(int argc, char **argv)
     open_resizer();
     open_previewer();
     open_capture();
-//	    open_all_windows();
+    //open_all_windows();
+    open_osd0();
+    open_osd1();
 	
 // init_capture
 //	    //capture_get_chip_id();
@@ -2563,12 +2764,37 @@ int main(int argc, char **argv)
 //	    //display_getinfo_control();
     display_request_buffers();
     display_start_streaming();
-	
-//	//	    init_vid1_device();
-//	//	    init_osd0_device();
-//	//	    mmap_vid1();
-//	//	    mmap_osd0();
-//	//	    disable_all_windows();
+
+    test_data.osd0_width = 1024;
+    test_data.osd0_height = 768;
+    test_data.osd0_bpp = 16;
+    test_data.osd0_hzoom = 0;
+    test_data.osd0_vzoom = 0;
+    //test_data.osd0_xpos = 100;
+    //test_data.osd0_ypos = 100;
+    test_data.osd0_xpos = 0;
+    test_data.osd0_ypos = 0;
+
+    test_data.osd0_vmode = FB_VMODE_NONINTERLACED;
+    test_data.osd0_coloridx = BLUE_COLOR;
+
+    test_data.osd1_bpp = 4;
+    test_data.osd1_xpos = 0;
+    test_data.osd1_xpos = 0;
+    test_data.osd1_width = 1024;
+    test_data.osd1_height = 768;
+    test_data.osd1_vmode = FB_VMODE_NONINTERLACED;
+    test_data.osd1_coloridx = BLUE_COLOR;
+
+    init_osd0_device();
+    init_osd1_device();
+    mmap_osd0();
+    //mmap_osd1();
+//	    init_vid1_device();
+//	    init_osd0_device();
+//	    mmap_vid1();
+//	    mmap_osd0();
+//	    disable_all_windows();
     
     start_loop();
 	

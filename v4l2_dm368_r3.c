@@ -31,6 +31,8 @@
 #include <media/davinci/imp_previewer.h>
 #include <media/davinci/imp_resizer.h>
 #include <media/davinci/dm365_ipipe.h>
+#include <media/davinci/dm365_aew.h>
+#include <media/davinci/dm365_a3_hw.h>
 
 // #define ROTATE 1
 #include <video/davincifb_ioctl.h>
@@ -47,6 +49,7 @@
 #define OSD1_DEVICE	"/dev/fb2"
 #define FBVID0_DEVICE		"/dev/fb1"
 #define FBVID1_DEVICE		"/dev/fb3"
+#define AEW_DEVICE"/dev/dm365_aew"
 
 /* Function error codes */
 #define SUCCESS			0
@@ -365,6 +368,7 @@ static int mmap_osd0(void);
 static int disable_all_windows(void);
 static int display_frame(char id, void *ptr_buffer);
 static int allocate_user_buffers(void);
+static int aew_config(void);
 
 int main(int argc, char **argv)
 {
@@ -387,6 +391,7 @@ int main(int argc, char **argv)
     capture_set_input();
     //ccdc_config_raw();
     capture_start_streaming();
+    aew_config();
 
 // init_display
     open_display_dev();
@@ -409,6 +414,49 @@ int main(int argc, char **argv)
     // TODO: release device and memory
     
     return 0;
+}
+
+static int aew_config(void)
+{
+    struct aew_configuration *config;
+	int result;
+	int fd;
+	/* Open AEW Driver */
+	fd = open(AEW_DEVICE, O_RDWR);
+	if (fd < 0) {
+		printf("\n Error in opening device file");
+		return -1;
+	}
+    /* Allocate Memory For Configuration Structure */
+	config = (struct aew_configuration *)
+	    malloc(sizeof(struct aew_configuration));
+	/* Configure Window Parameters */
+	config->window_config.width = 100;
+	config->window_config.height = 2;
+	config->window_config.hz_line_incr = 8;
+	config->window_config.vt_line_incr = 8;
+	config->window_config.vt_cnt = 8;
+	config->window_config.hz_cnt = 31;
+	config->window_config.vt_start = 12;
+	config->window_config.hz_start = 128;
+	/* Configure black window parameter */
+	config->blackwindow_config.height = 4;
+	config->blackwindow_config.vt_start = 11;
+	/* Enable ALaw */
+	config->alaw_enable = H3A_AEW_ENABLE;
+	/* Set Saturation limit */
+	config->saturation_limit = 100;
+	/* Call AEW_S_PARAM to set Parameters */
+	printf("\n error no instance 1 %d", errno);
+	result = ioctl(fd, AEW_S_PARAM, config);
+	printf("\n IOCTL S_PARAM Return Value : %d", result);
+	printf("\n error no %d", errno);
+	//ioctl(fd, AEW_DISABLE);
+	if (config)
+		free(config);
+	/* Close Driver File */
+	close(fd);
+	return 0;
 }
 
 static void open_resizer(void)
@@ -676,13 +724,13 @@ static void open_previewer(void)
             printf("cap.module_id == PREV_WB\n");
             bzero((void *)&wb, sizeof (struct prev_wb));
             wb.gain_r.integer = 1;
-            wb.gain_r.decimal = 0;
+            wb.gain_r.decimal = 0; // 有效范围0~511
             wb.gain_gr.integer = 1;
-            wb.gain_gr.decimal = 0;
+            wb.gain_gr.decimal = 127;
             wb.gain_gb.integer = 1;
-            wb.gain_gb.decimal = 0;
+            wb.gain_gb.decimal = 127;
             wb.gain_b.integer = 1;
-            wb.gain_b.decimal = 0;
+            wb.gain_b.decimal = 255;
             wb.ofst_r = 0;
             wb.ofst_gb = 0;
             wb.ofst_b = 0;
